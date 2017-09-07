@@ -1,3 +1,6 @@
+# Plugin PayMaster directory add 
+!/wa-plugins/paymant/paymaster
+
 # Ignore application configuration and data files
 wa-apps
 wa-cache
@@ -21,7 +24,4 @@ wa.php
 
 # Ignore paths that contain user-generated content.
 /.idea/
-
-
-# Plugin PayMaster directory add 
-!/wa-plugins/paymant/paymaster
+.DS_Store

@@ -1,0 +1,27 @@
+# Ignore application configuration and data files
+wa-apps
+wa-cache
+wa-config
+wa-content
+wa-data
+wa-installer
+wa-log
+wa-plugins
+wa-sources
+wa-system
+wa-widgets
+.files.md5
+.htaccess
+api.php
+cli.php
+index.php
+LICENSE
+README
+wa.php
+
+# Ignore paths that contain user-generated content.
+/.idea/
+
+
+# Plugin PayMaster directory add 
+!/wa-plugins/paymant/paymaster

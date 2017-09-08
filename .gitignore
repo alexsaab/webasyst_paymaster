@@ -1,5 +1,6 @@
 # Plugin PayMaster directory add 
-!/wa-plugins/paymant/paymaster
+!/wa-plugins/paymant/paymaster/
+!/wa-plugins/payment/paymaster/templates/
 
 # Ignore application configuration and data files
 wa-apps
@@ -9,7 +10,6 @@ wa-content
 wa-data
 wa-installer
 wa-log
-wa-plugins
 wa-sources
 wa-system
 wa-widgets
@@ -25,3 +25,4 @@ wa.php
 # Ignore paths that contain user-generated content.
 /.idea/
 .DS_Store
+/wa-plugins/payment/yandexmoney/

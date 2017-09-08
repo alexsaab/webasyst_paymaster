@@ -1,5 +1,7 @@
 <?php
 return array(
+
+
     'merchantID'   => array(
         'value'        => '',
         'title'        => 'Идентификатор продавца',

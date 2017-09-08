@@ -23,19 +23,13 @@ return array(
             'sha256' => 'sha256',
         ),
     ),
-    'currency'     => array(
-        'value'        => 'RUB',
-        'title'        => 'Идентификатор валюты',
-        'description'  => 'Введите Идентификатор валюты по ISO, для рублей это всегда RUB',
-        'control_type' => 'input',
-    ),
-    'desc'         => array(
+    'description'         => array(
         'value'        => 'Заказ на сайте №',
         'title'        => 'Описание платежа',
         'description'  => 'Как будет выглядеть платеж в системе PayMaster',
         'control_type' => 'input',
     ),
-    'vat_products' => array(
+    'vatProducts' => array(
         'value'            => 'map',
         'title'            => 'Ставки НДС для продукта',
         'control_type'     => waHtmlControl::SELECT,
@@ -44,7 +38,7 @@ return array(
 Если вы работаете по другой системе налогообложения, выберите «НДС не облагается».',
         'options_callback' => array($this, 'vatProductsOptions'),
     ),
-    'vat_delivery' => array(
+    'vatDelivery' => array(
         'value'            => 'map',
         'title'            => 'Ставки НДС для доставки',
         'control_type'     => waHtmlControl::SELECT,

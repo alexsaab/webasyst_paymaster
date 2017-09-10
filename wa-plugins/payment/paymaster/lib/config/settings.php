@@ -1,7 +1,5 @@
 <?php
 return array(
-
-
     'merchantID'   => array(
         'value'        => '',
         'title'        => 'Идентификатор продавца',
@@ -46,5 +44,11 @@ return array(
         'control_type'     => waHtmlControl::SELECT,
         'description'      => 'Выберете ставку НДС для обложения доставки',
         'options_callback' => array($this, 'vatDeliveryOptions'),
+    ),
+    'testMode'   => array(
+	    'value'        => '',
+	    'title'        => 'Тестовый режим',
+	    'description'  => 'Отметьте если хотите выполнять транзакции в тестовом режиме',
+	    'control_type' => 'checkbox',
     ),
 );

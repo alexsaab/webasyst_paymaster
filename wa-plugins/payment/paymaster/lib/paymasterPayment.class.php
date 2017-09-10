@@ -5,17 +5,6 @@
  * @author      Webasyst
  * @name                  Paymaster
  * @description Paymaster payment module
- * @property-read string  $integration_type
- * @property-read string  $account
- * @property-read string  $TESTMODE
- * @property-read string  $shopPassword
- * @property-read string  $ShopID
- * @property-read string  $scid
- * @property-read string  $payment_mode
- * @property-read array   $paymentType
- * @property-read boolean $receipt
- * @property-read int     $taxSystem
- * @property-read string  $taxes
  *
  * @see         http://info.paymaster.ru/api/
  */
@@ -46,31 +35,23 @@ class paymasterPayment extends waPayment implements waIPayment
 			$order_data['description'] = $this->description . $order_data['order_id'];
 		}
 		// вызываем класс-обертку, чтобы гарантировать использование данных в правильном формате
-		$order = waOrder::factory($order_data);
+		$order = $order_data = waOrder::factory($order_data);
 
-
-		$order_data = waOrder::factory($order_data);
-		if ($order_data['currency_id'] != 'RUB')
-		{
-			return array(
-				'type' => 'error',
-				'data' => 'Оплата на сайте PayMaster производится в только в рублях (RUB) и в данный момент невозможна, так как эта валюта не определена в настройках.',
-			);
-		}
 		// добавляем в платежную форму поля, требуемые платежной системой WebMoney
 		$hidden_fields = array(
 			'LMI_MERCHANT_ID'    => $this->merchantID,
-			'LMI_PAYMENT_AMOUNT' => number_format($order->total, 2, '.', ''),
+			'LMI_PAYMENT_AMOUNT' => number_format($this->getOrderAmount($order), 2, '.', ''),
 			'LMI_CURRENCY'       => strtoupper($order->currency),
 			'LMI_PAYMENT_NO'     => $order_data['order_id'],
 			'LMI_PAYMENT_DESC'   => $order->description,
 			'LMI_NOTIFY_URL'     => $this->getRelayUrl(),
+			'SIGN' => $this->getSign($this->merchantID, $order_data['order_id'],number_format($this->getOrderAmount($order), 2, '.', ''),strtoupper($order->currency),$this->secret,$this->signMethod)
 		);
 
 
-		if ($this->TESTMODE)
+		if ($this->testMode)
 		{
-			$hidden_fields['LMI_SIM_MODE'] = $this->LMI_SIM_MODE;
+			$hidden_fields['LMI_SIM_MODE'] = $this->testMode;
 		}
 		if (!empty($order_data['customer_info']['email']))
 		{
@@ -98,12 +79,13 @@ class paymasterPayment extends waPayment implements waIPayment
 			$hidden_fields["LMI_SHOPPINGCART.ITEM[{$key}].TAX"] = $this->vatProducts;
 		}
 
-		if ($order->shipping > 0) {
+		if ($order->shipping > 0)
+		{
 			$key++;
 			$hidden_fields["LMI_SHOPPINGCART.ITEM[{$key}].NAME"]  = $order->shipping_name;
 			$hidden_fields["LMI_SHOPPINGCART.ITEM[{$key}].QTY"]   = 1;
 			$hidden_fields["LMI_SHOPPINGCART.ITEM[{$key}].PRICE"] = number_format($order->shipping, 2, '.', '');
-			$hidden_fields["LMI_SHOPPINGCART.ITEM[{$key}].TAX"] = $this->vatDelivery;
+			$hidden_fields["LMI_SHOPPINGCART.ITEM[{$key}].TAX"]   = $this->vatDelivery;
 		}
 
 		$view = wa()->getView();
@@ -130,66 +112,14 @@ class paymasterPayment extends waPayment implements waIPayment
 		return $options;
 	}
 
+
+
 	/**
-	 * @see https://tech.yandex.ru/money/doc/payment-solution/payment-form/payment-form-receipt-docpage/
+	 * Получение налогового кода
+	 * @param $item
 	 *
-	 * @param waOrder $order
-	 *
-	 * @return array|null
+	 * @return int
 	 */
-	private function getReceiptData(waOrder $order)
-	{
-		$receipt = null;
-		if ($this->receipt)
-		{
-			$contact = $order->getContactField('email');
-			if (empty($contact))
-			{
-				if ($contact = $order->getContactField('phone'))
-				{
-					$contact = sprintf('+%s', preg_replace('@^8@', '7', $contact));
-				}
-			}
-
-			if (!empty($contact))
-			{
-				$receipt = array(
-					'customerContact' => $contact,
-					'items'           => array(),
-				);
-				if ($this->taxSystem)
-				{
-					$receipt['taxSystem'] = $this->taxSystem;
-				}
-
-				foreach ($order->items as $item)
-				{
-					$item['amount']     = $item['price'] - ifset($item['discount'], 0.0);
-					$receipt['items'][] = array(
-						'quantity' => $item['quantity'],
-						'price'    => array(
-							'amount' => number_format($item['amount'], 2, '.', ''),
-						),
-						'tax'      => $this->getTaxId($item),
-						'text'     => mb_substr($item['name'], 0, 128),
-					);
-				}
-
-				#shipping
-				$receipt['items'][] = array(
-					'quantity' => 1,
-					'price'    => array(
-						'amount' => number_format($order->shipping, 2, '.', ''),
-					),
-					'tax'      => 1,
-					'text'     => mb_substr($order->shipping_name, 0, 128),
-				);
-			}
-		}
-
-		return $receipt;
-	}
-
 	private function getTaxId($item)
 	{
 		$id = 1;
@@ -226,201 +156,89 @@ class paymasterPayment extends waPayment implements waIPayment
 		return $id;
 	}
 
+	/**
+	 * @param array $request
+	 *
+	 * @return waPayment
+	 */
 	protected function callbackInit($request)
 	{
-		$this->request    = $request;
-		$pattern          = '/^([a-z]+)_(.+)_(.+)$/';
-		$merchant_pattern = '/^([a-z]+)_([^_]+)_([^_]+)/';
-
-		if (!empty($request['orderNumber']) && preg_match($pattern, $request['orderNumber'], $match))
-		{
-			$this->app_id      = $match[1];
-			$this->merchant_id = $match[2];
-			$this->order_id    = $match[3];
-		}
-		elseif (!empty($request['merchant_order_id']) && preg_match($merchant_pattern, $request['merchant_order_id'], $match))
-		{
-			$this->app_id      = $match[1];
-			$this->merchant_id = $match[2];
-			$this->order_id    = $match[3];
-		}
-		elseif (!empty($request['orderDetails']))
-		{
-			/**
-			 * @see https://tech.yandex.ru/money/doc/payment-solution/payment-process/payments-mpos-docpage/
-			 * mobile terminal — detect app automatically/parse string
-			 * shop:100500 #order_id new
-			 */
-			if (preg_match('@^(\w+):(\d+)(\s+|$)@', $request['orderDetails'], $match))
-			{
-				$this->app_id      = $match[1];
-				$this->merchant_id = $match[2];
-				$comment           = trim($match[3]);
-				if (preg_match('@^(\d+)(\s+|$)@', $comment, $match))
-				{
-					$this->order_id = $match[1];
-				}
-				else
-				{
-					$this->order_id = 'offline';
-				}
-			}
-			elseif (preg_match('@^#?(\d+)(\s+|$)@', $request['orderDetails'], $match))
-			{
-				$this->order_id = $match[1];
-			}
-			else
-			{
-				$this->order_id = 'offline';
-			}
-			if (empty($this->merchant_id))
-			{
-				$this->merchant_id = array($this, 'callbackMatchSettings');
-			}
-		}
-		elseif (isset($request['paymentType']) && ($request['paymentType'] == 'MP'))
-		{
-			$this->order_id    = 'offline';
-			$this->merchant_id = array($this, 'callbackMatchSettings');
-		}
+		$this->request = $request;
 
 		return parent::callbackInit($request);
 	}
 
-	public function callbackMatchSettings($settings)
-	{
-		return !empty($settings['ShopID'])
-			&& ($settings['ShopID'] == ifset($this->request['shopId']))
-			&& !empty($settings['scid'])
-			&& ($settings['scid'] == ifset($this->request['scid']))
-			&& ($settings['payment_mode'] == 'MP');
-	}
-
 	/**
 	 *
-	 * @param array $request - get from gateway
-	 *
+		* @param array $request - get from gateway
+	*
 	 * @throws waPaymentException
-	 * @return mixed
-	 */
+	* @return mixed
+		*/
 	protected function callbackHandler($request)
 	{
+
 		$transaction_data = $this->formalizeData($request);
+		$app_payment_method = $this->id;
 
-		$code = ($transaction_data['type'] == self::OPERATION_CHECK) ? self::XML_PAYMENT_REFUSED : self::XML_TEMPORAL_PROBLEMS;
+		$order = new shopOrderModel();
 
-		if (!$this->order_id || !$this->app_id || !$this->merchant_id)
+
+
+		if ($_SERVER["REQUEST_METHOD"] == "POST")
 		{
-			throw new waPaymentException('invalid invoice number', $code);
-		}
-		if (!$this->ShopID)
-		{
-			throw new waPaymentException('empty merchant data', $code);
-		}
-		if (waRequest::get('result') || (ifset($request['action']) == 'PaymentFail'))
-		{
-			if ((ifset($request['action']) == 'PaymentFail') || (waRequest::get('result') == 'fail'))
+
+			$order_total = $request->LMI_PAID_AMOUNT;
+
+			if ($request->LMI_PREREQUEST)
 			{
-				$type = waAppPayment::URL_FAIL;
+				if (($request->LMI_MERCHANT_ID == $this->merchantID) && ($request->LMI_PAYMENT_AMOUNT == $order_total))
+				{
+					self::log($this->id, array('success' => 'Test finished with success'));
+					echo 'YES';
+					exit;
+				}
+				else
+				{
+					self::log($this->id, array('error' => 'Test finished with error'));
+					echo 'FAIL';
+					exit;
+				}
 			}
 			else
 			{
-				$type = waAppPayment::URL_SUCCESS;
-			}
-
-			return array(
-				'redirect' => $this->getAdapter()->getBackUrl($type, $transaction_data),
-			);
-		}
-
-		$this->verifySign($request);
-
-		if (!$this->TESTMODE)
-		{
-			if (ifset($request['orderSumCurrencyPaycash']) != 643)
-			{
-				throw new waPaymentException('Invalid currency code', self::XML_PAYMENT_REFUSED);
-			}
-		}
-
-		if (($this->order_id === 'offline') || (ifset($request['paymentType']) == 'MP'))
-		{
-			$transaction_data['unsettled'] = true;
-			$fields                        = array(
-				'native_id' => $transaction_data['native_id'],
-				'plugin'    => $this->id,
-				'type'      => array(waPayment::OPERATION_CHECK, waPayment::OPERATION_AUTH_CAPTURE),
-			);
-			$tm                            = new waTransactionModel();
-			$check                         = $tm->getByField($fields);
-			if ($check && !empty($check['order_id']))
-			{
-				if ($transaction_data['order_id'] != $check['order_id'])
+				$hash = $this->getHash($request->LMI_MERCHANT_ID, $request->LMI_PAYMENT_NO, $request->LMI_SYS_PAYMENT_ID, $request->LMI_SYS_PAYMENT_DATE, $order_total, $request->LMI_CURRENCY, $request->LMI_PAID_AMOUNT, $request->LMI_PAID_CURRENCY, $request->LMI_PAYMENT_SYSTEM, $request->LMI_SIM_MODE, $this->secret, $this->signMethod);
+				if ($request->LMI_HASH == $hash)
 				{
-					if (($transaction_data['order_id'] !== 'offline') && ($transaction_data['order_id'] != $check['order_id']))
+					$sign = $this->getSign($request->LMI_MERCHANT_ID, $request->LMI_PAYMENT_NO, $request->LMI_PAID_AMOUNT, $request->LMI_PAID_CURRENCY, $this->secret, $this->signMethod);
+					if ($sign == $request->SIGN)
 					{
-						$message                       = ' Внимание: номер переданного заказа %s не совпадает с сопоставленным';
-						$transaction_data['view_data'] .= sprintf($message, htmlentities($transaction_data['order_id'], ENT_NOQUOTES, 'utf-8'));
+						$transaction_data = $this->saveTransaction($transaction_data, $request);
+						$result           = $this->execAppCallback($app_payment_method, $transaction_data);
+						self::log($this->id, array('success' => 'Payment paymaster finished with success'));
+						return $result;
 					}
-					$transaction_data['order_id'] = $check['order_id'];
+					else
+					{
+						self::log($this->id, array('error' => 'Invalid sign'));
+						return;
+					}
+				} else {
+					self::log($this->id, array('error' => 'Invalid hash'));
+					return;
 				}
 			}
 		}
 
-		switch ($transaction_data['type'])
-		{
-			case self::OPERATION_CHECK:
-				$app_payment_method        = self::CALLBACK_CONFIRMATION;
-				$transaction_data['state'] = '';
-				break;
 
-			case self::OPERATION_AUTH_CAPTURE:
-				//XXX rebillingOn workaround needed
-				if (empty($tm))
-				{
-					$tm = new waTransactionModel();
-				}
-				$fields = array(
-					'native_id' => $transaction_data['native_id'],
-					'plugin'    => $this->id,
-					'type'      => waPayment::OPERATION_AUTH_CAPTURE,
-				);
-				if ($tm->getByFields($fields))
-				{
-					// exclude transactions duplicates
-					throw new waPaymentException('already accepted', self::XML_SUCCESS);
-				}
-
-				$app_payment_method        = self::CALLBACK_PAYMENT;
-				$transaction_data['state'] = self::STATE_CAPTURED;
-				break;
-			default:
-				throw new waPaymentException('unsupported payment operation', self::XML_TEMPORAL_PROBLEMS);
-		}
-
-		$transaction_data = $this->saveTransaction($transaction_data, $request);
-		$result           = $this->execAppCallback($app_payment_method, $transaction_data);
-
-		return $this->getXMLResponse($request, !empty($result['result']) ? self::XML_SUCCESS : self::XML_PAYMENT_REFUSED, ifset($result['error']));
+		return $result;
 	}
 
-	protected function callbackExceptionHandler(Exception $ex)
-	{
-		self::log($this->id, $ex->getMessage());
-		$message = '';
-		if ($ex instanceof waPaymentException)
-		{
-			$code    = $ex->getCode();
-			$message = $ex->getMessage();
-		}
-		else
-		{
-			$code = self::XML_TEMPORAL_PROBLEMS;
-		}
 
-		return $this->getXMLResponse($this->request, $code, $message);
-	}
-
+	/**
+	 * Для вызова интерфейса PayMaster
+	 * @return string
+	 */
 	private function getEndpointUrl()
 	{
 
@@ -428,109 +246,25 @@ class paymasterPayment extends waPayment implements waIPayment
 	}
 
 	/**
-	 * Check MD5 hash of transferred data
-	 * @throws waPaymentException
-	 *
-	 * @param array $request
+	 * Получение суммы заказа
 	 */
-	private function verifySign($request)
+	private function getOrderAmount($order)
 	{
-		$fields = array(
-			'shopId'              => $this->ShopID,
-			'scid'                => $this->scid,
-			'orderSumBankPaycash' => ($this->TESTMODE) ? 1003 : 1001,
-		);
-		foreach ($fields as $field => $value)
+		$amount = 0;
+
+		foreach ($order->items as $key => $product)
 		{
-			if (empty($request[$field]) || ($request[$field] != $value))
-			{
-				throw new waPaymentException("Invalid value of field {$field}", self::XML_PAYMENT_REFUSED);
-			}
+			$amount += ($product['price'] - $product['discount']) * $product['quantity'];
 		}
 
-		$hash_chunks = array();
-		switch ($this->version)
+		if ($order->shipping > 0)
 		{
-			case '3.0':
-				//action;orderSumAmount;orderSumCurrencyPaycash;orderSumBankPaycash;shopId;invoiceId;customerNumber;shopPassword
-				$hash_params = array(
-					'action',
-					'orderSumAmount',
-					'orderSumCurrencyPaycash',
-					'orderSumBankPaycash',
-					'shopId',
-					'invoiceId',
-					'CustomerNumber' => 'customerNumber',
-				);
-				break;
-			default:
-				//orderIsPaid;orderSumAmount;orderSumCurrencyPaycash;orderSumBankPaycash;shopId;invoiceId;customerNumber
-				//В случае расчета криптографического хэша, в конце описанной выше строки добавляется «;shopPassword»
-				$hash_params = array(
-					'orderIsPaid',
-					'orderSumAmount',
-					'orderSumCurrencyPaycash',
-					'orderSumBankPaycash',
-					'shopId',
-					'invoiceId',
-					'CustomerNumber' => 'customerNumber',
-				);
-				break;
+			$amount += $order->shipping;
 		}
 
-		$missed_fields = array();
-		foreach ($hash_params as $id => $field)
-		{
-			if (is_int($id))
-			{
-				if (!isset($request[$field]))
-				{
-					$missed_fields[] = $field;
-				}
-				else
-				{
-					$hash_chunks[] = $request[$field];
-				}
-			}
-			else
-			{
-				if (!empty($request[$id]))
-				{
-					$hash_chunks[] = $request[$id];
-				}
-				elseif (!empty($request[$field]))
-				{
-					$hash_chunks[] = $request[$field];
-				}
-				else
-				{
-					$missed_fields[] = $field;
-				}
-			}
-
-		}
-
-		if ($missed_fields)
-		{
-			self::log(
-				$this->id,
-				array(
-					'method'  => __METHOD__,
-					'version' => $this->version,
-					'error'   => 'empty required field(s): ' . implode(', ', $missed_fields),
-				)
-			);
-			throw new waPaymentException('Empty required field', self::XML_BAD_REQUEST);
-		}
-
-		$hash_chunks[] = $this->shopPassword;
-
-		$hash = strtoupper(md5(implode(';', $hash_chunks)));
-		if (empty($request['md5']) || ($hash !== strtoupper($request['md5'])))
-		{
-			throw new waPaymentException('invalid hash', self::XML_AUTH_FAILED);
-		}
+		return $amount;
 	}
+
 
 	/**
 	 * Convert transaction raw data to formatted data
@@ -641,80 +375,43 @@ class paymasterPayment extends waPayment implements waIPayment
 		return $transaction_data;
 	}
 
-	public function supportedOperations()
+	/**
+	 * Возвращаем HASH запроса
+	 * @param $merchant_id
+	 * @param $order_id
+	 * @param $amount
+	 * @param $lmi_currency
+	 * @param $secret_key
+	 * @param string $sign_method
+	 * @return string
+	 */
+	public function getHash($LMI_MERCHANT_ID, $LMI_PAYMENT_NO, $LMI_SYS_PAYMENT_ID, $LMI_SYS_PAYMENT_DATE, $LMI_PAYMENT_AMOUNT, $LMI_CURRENCY, $LMI_PAID_AMOUNT, $LMI_PAID_CURRENCY, $LMI_PAYMENT_SYSTEM, $LMI_SIM_MODE, $SECRET, $hash_method = 'md5')
 	{
-		return array(
-			self::OPERATION_CHECK,
-			self::OPERATION_AUTH_CAPTURE,
-		);
+		$string = $LMI_MERCHANT_ID . ";" . $LMI_PAYMENT_NO . ";" . $LMI_SYS_PAYMENT_ID . ";" . $LMI_SYS_PAYMENT_DATE . ";" . $LMI_PAYMENT_AMOUNT . ";" . $LMI_CURRENCY . ";" . $LMI_PAID_AMOUNT . ";" . $LMI_PAID_CURRENCY . ";" . $LMI_PAYMENT_SYSTEM . ";" . $LMI_SIM_MODE . ";" . $SECRET;
+
+		$hash = base64_encode(hash($hash_method, $string, TRUE));
+
+		return $hash;
 	}
+
 
 	/**
-	 * @param        $request
-	 * @param        $code
-	 * @param string $message
-	 *
-	 * @return array
+	 * Возвращаем подпись
+	 * @param $merchant_id
+	 * @param $order_id
+	 * @param $amount
+	 * @param $lmi_currency
+	 * @param $secret_key
+	 * @param string $sign_method
+	 * @return string
 	 */
-	private function getXMLResponse($request, $code, $message = '')
+	public function getSign($merchant_id, $order_id, $amount, $lmi_currency, $secret_key, $sign_method = 'md5')
 	{
-		$response                      = array();
-		$response['action']            = ifempty($request['action'], 'dummy');
-		$response['code']              = $code;
-		$response['performedDatetime'] = date('c');
 
-		$message = preg_replace('@[\s\n]+@', ' ', $message);
-		$message = htmlentities($message, ENT_QUOTES, 'utf-8');
-		if ($this->version == '1.3')
-		{
-			$message = iconv('utf-8', 'cp1251', $message);
-		}
-		if (strlen($message) > 64)
-		{
-			$message = substr($message, 0, 64);
-		}
-		$response['techMessage'] = $message;
-		$response['shopId']      = $this->ShopID;
-		$response['invoiceId']   = ifempty($request['invoiceId'], '');
+		$plain_sign = $merchant_id . $order_id . $amount . $lmi_currency . $secret_key;
+		$sign = base64_encode(hash($sign_method, $plain_sign, TRUE));
 
-		return array(
-			'template' => $this->path . '/templates/response.' . $this->version . '.xml',
-			'data'     => $response,
-			'header'   => array(
-				'Content-type' => ($this->version == '1.3') ? 'text/xml; charset=windows-1251;' : 'text/xml; charset=utf-8;',
-			),
-		);
-	}
-
-	/**
-	 * @link https://tech.yandex.ru/money/doc/payment-solution/reference/payment-type-codes-docpage/
-	 * @return array
-	 */
-	public static function settingsPaymentOptions()
-	{
-		return array(
-			'PC' => 'Оплата со счета в Яндекс.Деньгах',
-			'AC' => 'Оплата с банковской карты',
-			'GP' => 'Оплата по коду через терминал',
-			'MC' => 'Оплата со счета мобильного телефона',
-			'WM' => 'Оплата со счета WebMoney',
-			'SB' => 'Оплата через Сбербанк Онлайн',
-			'AB' => 'Оплата в Альфа-Клик',
-			'MP' => 'Оплата через мобильный терминал (mPOS)',
-			'MA' => 'Оплата через MasterPass',
-			'PB' => 'Оплата через интернет-банк Промсвязьбанка',
-			'QW' => 'Оплата через QIWI Wallet',
-			'KV' => 'Оплата через КупиВкредит (Тинькофф Банк)',
-			'QP' => 'Оплата через Доверительный платеж («Куппи.ру»)',
-		);
-	}
-
-	public static function settingsPaymentModeOptions()
-	{
-		return array(
-				'customer' => 'На выбор покупателя после перехода на сайт Яндекса (рекомендуется)',
-				''         => 'Не задан (определяется Яндексом)',
-			) + self::settingsPaymentOptions();
+		return $sign;
 	}
 
 

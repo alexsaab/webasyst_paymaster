@@ -1,13 +1,13 @@
 <?php
 return array(
-    'merchantID'   => array(
+    'LMI_MERCHANT_ID'   => array(
         'value'        => '',
         'title'        => 'Идентификатор продавца',
         'description'  => 'Для того, чтобы узнать Идентификатор продавца (ID Merchant) вам необходимо зайти в личный кабинет на сайте PayMaster',
         'control_type' => 'input',
     ),
-    'secret'       => array(
-        'value'        => '',
+    'secretPhrase'       => array(
+        'value'        => 'aaaaaa',
         'title'        => 'Секретная фраза',
         'description'  => 'Это сочетание знаков должно быть одинаковым и совпадать с тем, что вы ввели в интерфейсе PayMaster',
         'control_type' => 'input',

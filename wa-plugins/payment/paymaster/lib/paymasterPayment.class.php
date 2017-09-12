@@ -28,7 +28,6 @@ class paymasterPayment extends waPayment implements waIPayment
 
 	public function payment($payment_form_data, $order_data, $auto_submit = false)
 	{
-
 		// заполняем обязательный элемент данных с описанием заказа
 		if (empty($order_data['description']))
 		{
@@ -39,15 +38,15 @@ class paymasterPayment extends waPayment implements waIPayment
 
 		// добавляем в платежную форму поля, требуемые платежной системой WebMoney
 		$hidden_fields = array(
-			'LMI_MERCHANT_ID'    => $this->merchantID,
+			'LMI_MERCHANT_ID'    => $this->LMI_MERCHANT_ID,
 			'LMI_PAYMENT_AMOUNT' => number_format($this->getOrderAmount($order), 2, '.', ''),
 			'LMI_CURRENCY'       => strtoupper($order->currency),
 			'LMI_PAYMENT_NO'     => $order_data['order_id'],
 			'LMI_PAYMENT_DESC'   => $order->description,
-			'LMI_NOTIFY_URL'     => $this->getRelayUrl(),
-			'SIGN' => $this->getSign($this->merchantID, $order_data['order_id'],number_format($this->getOrderAmount($order), 2, '.', ''),strtoupper($order->currency),$this->secret,$this->signMethod)
+			'wa_app'             => $this->app_id,
+			'wa_merchant_contact_id' => $this->merchant_id,
+			'SIGN'               => $this->getSign($this->LMI_MERCHANT_ID, $order_data['order_id'], number_format($this->getOrderAmount($order), 2, '.', ''), strtoupper($order->currency), $this->secretPhrase, $this->signMethod), 'LMI_PAYMENT_NOTIFICATION_URL' => $this->getRelayUrl(),
 		);
-
 
 		if ($this->testMode)
 		{
@@ -114,47 +113,6 @@ class paymasterPayment extends waPayment implements waIPayment
 
 
 
-	/**
-	 * Получение налогового кода
-	 * @param $item
-	 *
-	 * @return int
-	 */
-	private function getTaxId($item)
-	{
-		$id = 1;
-		switch ($this->taxes)
-		{
-			case 'no':
-				# 1 — без НДС;
-				$id = 1;
-				break;
-			case 'map':
-				$rate = ifset($item['tax_rate']);
-				if (in_array($rate, array(null, false, ''), true))
-				{
-					$rate = -1;
-				}
-				switch ($rate)
-				{
-					case 18: # 4 — НДС чека по ставке 18%;
-						$id = 4;
-						break;
-					case 10: # 3 — НДС чека по ставке 10%;
-						$id = 3;
-						break;
-					case 0: # 2 — НДС по ставке 0%;
-						$id = 2;
-						break;
-					default: # 1 — без НДС;
-						$id = 1;
-						break;
-				}
-				break;
-		}
-
-		return $id;
-	}
 
 	/**
 	 * @param array $request
@@ -163,36 +121,51 @@ class paymasterPayment extends waPayment implements waIPayment
 	 */
 	protected function callbackInit($request)
 	{
-		$this->request = $request;
+		if (!empty($request['LMI_PAYMENT_NO']) && !empty($request['wa_app']) && !empty($request['LMI_MERCHANT_ID']))
+		{
+			$this->order_id    = $request['LMI_PAYMENT_NO'];
+			$this->app_id      = $request['wa_app'];
+			$this->merchant_id = $request['wa_merchant_contact_id'];
+		}
+		else
+		{
+			self::log($this->id, array('error' => 'empty required field(s)'));
+			throw new waPaymentException('Empty required field(s)');
+		}
 
 		return parent::callbackInit($request);
 	}
 
 	/**
 	 *
-		* @param array $request - get from gateway
-	*
+	 * @param array $request - get from gateway
+	 *
 	 * @throws waPaymentException
-	* @return mixed
-		*/
+	 * @return mixed
+	 */
 	protected function callbackHandler($request)
 	{
 
 		$transaction_data = $this->formalizeData($request);
-		$app_payment_method = $this->id;
 
-		$order = new shopOrderModel();
+		$transaction_data['order_id'] = $request['LMI_PAYMENT_NO'];
 
+		//Получаем сразу HASH
+		$hash = $this->getHash($request['LMI_MERCHANT_ID'], $request['LMI_PAYMENT_NO'], $request['LMI_SYS_PAYMENT_ID'], $request['LMI_SYS_PAYMENT_DATE'], $request['LMI_PAYMENT_AMOUNT'], $request['LMI_CURRENCY'], $request['LMI_PAID_AMOUNT'], $request['LMI_PAID_CURRENCY'], $request['LMI_PAYMENT_SYSTEM'], $request['LMI_SIM_MODE'], $this->secretPhrase, $this->signMethod);
+
+		//Получаем сразу подпись
+		$sign = $this->getSign($request['LMI_MERCHANT_ID'], $request['LMI_PAYMENT_NO'], $request['LMI_PAID_AMOUNT'], $request['LMI_PAID_CURRENCY'], $this->secretPhrase, $this->signMethod);
 
 
 		if ($_SERVER["REQUEST_METHOD"] == "POST")
 		{
+			self::log($this->id, array('success' => 'Начало тестирования оплаты'));
 
-			$order_total = $request->LMI_PAID_AMOUNT;
+			$order_total = $request['LMI_PAID_AMOUNT'];
 
-			if ($request->LMI_PREREQUEST)
+			if ($request['LMI_PREREQUEST'])
 			{
-				if (($request->LMI_MERCHANT_ID == $this->merchantID) && ($request->LMI_PAYMENT_AMOUNT == $order_total))
+				if (($request['LMI_MERCHANT_ID'] == $this->LMI_MERCHANT_ID) && ($request['LMI_PAYMENT_AMOUNT'] == $order_total))
 				{
 					self::log($this->id, array('success' => 'Test finished with success'));
 					echo 'YES';
@@ -207,31 +180,46 @@ class paymasterPayment extends waPayment implements waIPayment
 			}
 			else
 			{
-				$hash = $this->getHash($request->LMI_MERCHANT_ID, $request->LMI_PAYMENT_NO, $request->LMI_SYS_PAYMENT_ID, $request->LMI_SYS_PAYMENT_DATE, $order_total, $request->LMI_CURRENCY, $request->LMI_PAID_AMOUNT, $request->LMI_PAID_CURRENCY, $request->LMI_PAYMENT_SYSTEM, $request->LMI_SIM_MODE, $this->secret, $this->signMethod);
-				if ($request->LMI_HASH == $hash)
+
+				if ($request['LMI_HASH'] == $hash)
 				{
-					$sign = $this->getSign($request->LMI_MERCHANT_ID, $request->LMI_PAYMENT_NO, $request->LMI_PAID_AMOUNT, $request->LMI_PAID_CURRENCY, $this->secret, $this->signMethod);
-					if ($sign == $request->SIGN)
+
+					if ($sign == $request['SIGN'])
 					{
-						$transaction_data = $this->saveTransaction($transaction_data, $request);
-						$result           = $this->execAppCallback($app_payment_method, $transaction_data);
+						$transaction_data   = $this->saveTransaction($transaction_data, $request);
+						$app_payment_method = self::CALLBACK_PAYMENT;
+						$result             = $this->execAppCallback($app_payment_method, $transaction_data);
 						self::log($this->id, array('success' => 'Payment paymaster finished with success'));
+
 						return $result;
 					}
 					else
 					{
-						self::log($this->id, array('error' => 'Invalid sign'));
+						self::log($this->id, array('error' => 'Invalid SIGN'));
+
 						return;
 					}
-				} else {
-					self::log($this->id, array('error' => 'Invalid hash'));
+				}
+				else
+				{
+					self::log($this->id, array('error' => 'Invalid HASH'));
+
 					return;
 				}
 			}
 		}
 
+		return;
+	}
 
-		return $result;
+
+	/**
+	 * Устанавливаем статус заказа
+	 * @param $statusID
+	 */
+	public function setOrderStatus($statusID)
+	{
+
 	}
 
 
@@ -278,118 +266,26 @@ class paymasterPayment extends waPayment implements waIPayment
 	{
 		$transaction_data = parent::formalizeData($transaction_raw_data);
 
-		$view_data = '';
-		if (ifset($transaction_raw_data['paymentPayerCode']))
-		{
-			$view_data .= 'Account: ' . $transaction_raw_data['paymentPayerCode'];
-		}
-
-		if (!empty($transaction_raw_data['cps_provider']))
-		{
-			switch ($transaction_raw_data['cps_provider'])
-			{
-				case 'wm':
-					$view_data .= 'Оплачено: WebMoney';
-					break;
-				default:
-					$view_data .= 'Оплачено: ' . $transaction_raw_data['cps_provider'];
-					break;
-			}
-		}
-
-		if ($this->TESTMODE)
-		{
-			if (ifset($transaction_raw_data['orderSumCurrencyPaycash']) != 10643)
-			{
-				$view_data .= ' Реальная оплата в тестовом режиме;';
-			}
-			else
-			{
-				$view_data .= ' Тестовый режим;';
-			}
-		}
-
-		if (!empty($transaction_raw_data['paymentType']))
-		{
-			$types = self::settingsPaymentOptions();
-			if (isset($types[$transaction_raw_data['paymentType']]))
-			{
-				$view_data .= ' ' . $types[$transaction_raw_data['paymentType']];
-			}
-			switch ($transaction_raw_data['paymentType'])
-			{
-				case 'AC':
-					if (!empty($transaction_raw_data['cdd_pan_mask']) && !empty($transaction_raw_data['cdd_exp_date']))
-					{
-						$number    = str_replace('|', str_repeat('*', 6), $transaction_raw_data['cdd_pan_mask']);
-						$view_data .= preg_replace('@([\d*]{4})@', ' $1', $number);
-						$view_data .= preg_replace('@(\d{2})(\d{2})@', ' $1/20$2', $transaction_raw_data['cdd_exp_date']);
-					}
-					break;
-			}
-		}
-
-		$transaction_data = array_merge(
-			$transaction_data,
-			array(
-				'type'        => null,
-				'native_id'   => ifset($transaction_raw_data['invoiceId']),
-				'amount'      => ifset($transaction_raw_data['orderSumAmount']),
-				'currency_id' => 'RUB',
-				'customer_id' => ifempty($transaction_raw_data['customerNumber'], ifset($transaction_raw_data['CustomerNumber'])),
-				'result'      => 1,
-				'order_id'    => $this->order_id,
-				'view_data'   => trim($view_data),
-			)
-		);
-
-		switch (ifset($transaction_raw_data['action']))
-		{
-			case 'checkOrder': //Проверка заказа
-				$this->version            = '3.0';
-				$transaction_data['type'] = self::OPERATION_CHECK;
-				if ($this->order_id === 'offline')
-				{
-
-				}
-				else
-				{
-					$transaction_data['view_data'] .= ' Проверка актуальности заказа;';
-				}
-				break;
-			case 'paymentAviso': //Уведомления об оплате
-				$this->version            = '3.0';
-				$transaction_data['type'] = self::OPERATION_AUTH_CAPTURE;
-				break;
-
-			case 'Check': //Проверка заказа
-				$transaction_data['type'] = self::OPERATION_CHECK;
-				break;
-			case 'PaymentSuccess': //Уведомления об оплате
-				$transaction_data['type'] = self::OPERATION_AUTH_CAPTURE;
-				break;
-			case 'PaymentFail': //после неуспешного платежа.
-				break;
-		}
-
 		return $transaction_data;
 	}
 
 	/**
 	 * Возвращаем HASH запроса
-	 * @param $merchant_id
-	 * @param $order_id
-	 * @param $amount
-	 * @param $lmi_currency
-	 * @param $secret_key
+	 *
+	 * @param        $LMI_MERCHANT_ID
+	 * @param        $order_id
+	 * @param        $amount
+	 * @param        $lmi_currency
+	 * @param        $secret_key
 	 * @param string $sign_method
+	 *
 	 * @return string
 	 */
 	public function getHash($LMI_MERCHANT_ID, $LMI_PAYMENT_NO, $LMI_SYS_PAYMENT_ID, $LMI_SYS_PAYMENT_DATE, $LMI_PAYMENT_AMOUNT, $LMI_CURRENCY, $LMI_PAID_AMOUNT, $LMI_PAID_CURRENCY, $LMI_PAYMENT_SYSTEM, $LMI_SIM_MODE, $SECRET, $hash_method = 'md5')
 	{
 		$string = $LMI_MERCHANT_ID . ";" . $LMI_PAYMENT_NO . ";" . $LMI_SYS_PAYMENT_ID . ";" . $LMI_SYS_PAYMENT_DATE . ";" . $LMI_PAYMENT_AMOUNT . ";" . $LMI_CURRENCY . ";" . $LMI_PAID_AMOUNT . ";" . $LMI_PAID_CURRENCY . ";" . $LMI_PAYMENT_SYSTEM . ";" . $LMI_SIM_MODE . ";" . $SECRET;
 
-		$hash = base64_encode(hash($hash_method, $string, TRUE));
+		$hash = base64_encode(hash($hash_method, $string, true));
 
 		return $hash;
 	}
@@ -397,19 +293,21 @@ class paymasterPayment extends waPayment implements waIPayment
 
 	/**
 	 * Возвращаем подпись
-	 * @param $merchant_id
-	 * @param $order_id
-	 * @param $amount
-	 * @param $lmi_currency
-	 * @param $secret_key
+	 *
+	 * @param        $LMI_MERCHANT_ID
+	 * @param        $order_id
+	 * @param        $amount
+	 * @param        $lmi_currency
+	 * @param        $secret_key
 	 * @param string $sign_method
+	 *
 	 * @return string
 	 */
 	public function getSign($merchant_id, $order_id, $amount, $lmi_currency, $secret_key, $sign_method = 'md5')
 	{
 
 		$plain_sign = $merchant_id . $order_id . $amount . $lmi_currency . $secret_key;
-		$sign = base64_encode(hash($sign_method, $plain_sign, TRUE));
+		$sign       = base64_encode(hash($sign_method, $plain_sign, true));
 
 		return $sign;
 	}
@@ -486,7 +384,50 @@ class paymasterPayment extends waPayment implements waIPayment
 				'value' => 'no_vat',
 				'title' => 'без НДС',
 			),
-
 		);
+	}
+
+
+	/**
+	 * Получение налогового кода
+	 *
+	 * @param $item
+	 *
+	 * @return int
+	 */
+	private function getTaxId($item)
+	{
+		$id = 1;
+		switch ($this->taxes)
+		{
+			case 'no':
+				# 1 — без НДС;
+				$id = 1;
+				break;
+			case 'map':
+				$rate = ifset($item['tax_rate']);
+				if (in_array($rate, array(null, false, ''), true))
+				{
+					$rate = -1;
+				}
+				switch ($rate)
+				{
+					case 18: # 4 — НДС чека по ставке 18%;
+						$id = 4;
+						break;
+					case 10: # 3 — НДС чека по ставке 10%;
+						$id = 3;
+						break;
+					case 0: # 2 — НДС по ставке 0%;
+						$id = 2;
+						break;
+					default: # 1 — без НДС;
+						$id = 1;
+						break;
+				}
+				break;
+		}
+
+		return $id;
 	}
 }

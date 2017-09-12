@@ -26,3 +26,4 @@ wa.php
 /.idea/
 .DS_Store
 /wa-plugins/payment/yandexmoney/
+/wa-plugins/payment/webmoney/

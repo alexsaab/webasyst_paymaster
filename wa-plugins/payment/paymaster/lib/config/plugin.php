@@ -1,7 +1,7 @@
 <?php
 
 return array(
-    'name'        => 'Paymaster',
+    'name'        => 'PayMaster',
     'description' => 'Платежная система «<a href="https://paymaster.ru">PayMaster</a>»',
     'icon'        => 'img/paymaster16.png',
     'logo'        => 'img/paymaster.png',
